@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>完全固定された無限のバベルの図書館 (任意のページ数)</title>
+    <style>
+        body { font-family: monospace; background-color: #121212; color: #e0e0e0; padding: 20px; line-height: 1.6; }
+        h1, h2 { color: #d4af37; text-align: center; }
+        .container { max-width: 850px; margin: 0 auto; background: #1e1e1e; padding: 20px; border-radius: 8px; }
+        .section { margin-bottom: 25px; padding: 15px; border-bottom: 1px solid #333; }
+        button { background: #d4af37; color: #121212; border: none; padding: 8px 12px; font-weight: bold; cursor: pointer; border-radius: 4px; }
+        button:hover { background: #f1c40f; }
+        input[type="text"], input[type="number"] { padding: 8px; background: #333; border: 1px solid #555; color: #fff; border-radius: 4px; }
+        input[type="text"] { width: 60%; }
+        .result-box { background: #0a0a0a; border-left: 4px solid #d4af37; padding: 15px; margin-top: 15px; display: none; }
+        .book-shell { background: #252525; padding: 10px; margin: 10px 0; border-radius: 4px; border: 1px dashed #555; }
+        .page-viewer { background: #000; color: #00ff00; padding: 15px; font-size: 15px; white-space: pre-wrap; word-break: break-all; margin-top: 10px; border: 1px solid #333; font-family: 'Courier New', Courier, monospace; }
+        .info { font-size: 12px; color: #888; }
+        .book-title { color: #f1c40f; font-weight: bold; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>🏛️ バベルの図書館 (任意のページ数・29文字版)</h1>
+    <p style="text-align: center;" class="info">ルール：1行80文字、1ページ40行。すべての本は棚に固定されており、ページを移動することで中身を閲覧できます。</p>
+
+    <!-- 1. ランダム選書 -->
+    <div class="section">
+        <h2>🎲 ランダムに本を選ぶ</h2>
+        <button onclick="pickRandomBook()">本をランダムに指定</button>
+        <div id="randomResult" class="result-box"></div>
+    </div>
+
+    <!-- 2. 題名を調べる -->
+    <div class="section">
+        <h2>🔍 題名を調べる</h2>
+        <input type="text" id="titleInput" placeholder="タイトルを入力">
+        <button onclick="searchTitle()">本を特定する</button>
+        <div id="titleResult" class="result-box"></div>
+    </div>
+
+    <!-- 3. 内容を調べる -->
+    <div class="section">
+        <h2>📖 内容を調べる</h2>
+        <input type="text" id="contentInput" placeholder="内容を入力（80文字×40行以内）">
+        <button onclick="searchContent()">該当する本の一覧を出す</button>
+        <div id="contentResult" class="result-box"></div>
+    </div>
+</div>
+
+<script>
+const CHARS = "abcdefghijklmnopqrstuvwxyz ,."; 
+const PAGE_LEN = 3200; // 80 * 40
+
+// グローバルで現在開こうとしている本のデータを一時保持する
+let activeBooks = {};
+
+function textToAddress(text) {
+    let address = 0n;
+    for (let i = 0; i < text.length; i++) {
+        const charIndex = BigInt(CHARS.indexOf(text[i]));
+        address = address * 29n + (charIndex >= 0n ? charIndex : 0n);
+    }
+    return address;
+}
+
+function addressToText(address, length) {
+    let result = "";
+    let temp = address;
+    for (let i = 0; i < length; i++) {
+        const remainder = Number(temp % 29n);
+        result = CHARS[remainder] + result;
+        temp = temp / 29n;
+    }
+    return result;
+}
+
+function permanentScramble(addr) {
+    return addr ^ 0x55555555555555555555555555555555n; 
+}
+
+function format80(text) {
+    let res = "";
+    for (let i = 0; i < text.length; i += 80) res += text.substr(i, 80) + "\n";
+    return res;
+}
+
+// 指定されたページのテキストを「アドレス」と「ページ番号」から一意に解読する
+function getPageContent(bookId, pageNum) {
+    const book = activeBooks[bookId];
+    if (!book) return "エラー: 本が見つかりません。";
+    
+    // ページ数チェック
+    if (book.totalPages !== "無限" && (pageNum < 1 || pageNum > book.totalPages)) {
+        return `エラー: この本は全 ${book.totalPages} ページです。${pageNum} ページ目は存在しません。`;
+    }
+
+    // タイプ別のテキスト固定ロジック
+    if (book.type === "infinite_repeat") {
+        // すべてのページにそれしか書いていない本（何ページ目でも同じ）
+        let txt = "";
+        while(txt.length < PAGE_LEN) txt += book.queryText;
+        return format80(txt.substring(0, PAGE_LEN));
+    } else {
+        // 通常の本（住所とページ番号を数理結合して中身を完全固定）
+        const pageSeed = permanentScramble(book.address + BigInt(pageNum));
+        const pageText = addressToText(pageSeed, PAGE_LEN);
+        
+        // 1ページ目かつ検索経由の場合、指定のテキストを埋め込む処理
+        if (pageNum === 1 && book.injectedText) {
+            if (book.type === "exact") {
+                return format80(book.injectedText + " ".repeat(PAGE_LEN - book.injectedText.length));
+            } else if (book.type === "partial") {
+                const pad = PAGE_LEN - book.injectedText.length;
+                return format80(pageText.substring(0, Math.floor(pad/2)) + book.injectedText + pageText.substring(Math.floor(pad/2) + book.injectedText.length));
+            }
+        }
+        return format80(pageText);
+    }
+}
+
+// ページ読み込み用ボタンの共通処理
+function triggerLoadPage(bookId) {
+    const pageNum = parseInt(document.getElementById(`pageInput_${bookId}`).value);
+    if (isNaN(pageNum) || pageNum < 1) {
+        alert("有効なページ番号を入力してください。");
+        return;
+    }
+    const content = getPageContent(bookId, pageNum);
+    document.getElementById(`viewer_${bookId}`).innerHTML = content;
+    document.getElementById(`viewer_${bookId}`).style.display = "block";
+}
+
+// 本の情報を表示するHTMLテンプレート
+function createBookHTML(bookId, title, pages, addressText, extraInfo = "") {
+    return `
+    <div class="book-shell">
+        <span class="book-title">『${title}』</span> （総ページ数: <strong>${pages}</strong>）<br>
+        <span class="info">絶対住所: ${addressText} ${extraInfo}</span><br style="margin-bottom:8px;">
+        <input type="number" id="pageInput_${bookId}" value="1" min="1" style="width:60px;"> ページ目に 
+        <button onclick="triggerLoadPage('${bookId}')">移動して本を開く</button>
+        <div id="viewer_${bookId}" class="page-viewer" style="display:none;"></div>
+    </div>`;
+}
+
+// 1. ランダム選書
+function pickRandomBook() {
+    const rawAddr = BigInt(Math.floor(Math.random() * 1000000000));
+    const title = addressToText(permanentScramble(rawAddr), 12);
+    // 任意のページ数（1〜5000ページの有限、または30%の確率で無限ページになる）
+    const randPages = Math.random() > 0.7 ? "無限" : Math.floor(Math.random() * 5000) + 1;
+    
+    const bookId = "rand_" + rawAddr;
+    activeBooks[bookId] = { address: rawAddr, totalPages: randPages, type: "normal" };
+
+    const el = document.getElementById("randomResult");
+    el.style.display = "block";
+    el.innerHTML = `<h3>🎲 図書館から1冊を手に取りました</h3>` + createBookHTML(bookId, title, randPages, `Hex-${rawAddr.toString(16)}`);
+}
+
+// 2. 題名を調べる
+function searchTitle() {
+    const query = document.getElementById("titleInput").value.toLowerCase();
+    if(!query) return;
+    const addr = textToAddress(query);
+    const pages = Math.floor(Math.random() * 1000) + 10; // 任意の有限ページ
+
+    const bookId = "title_" + addr;
+    activeBooks[bookId] = { address: addr, totalPages: pages, type: "normal" };
+
+    const el = document.getElementById("titleResult");
+    el.style.display = "block";
+    el.innerHTML = `<h3>🟢 指定された題名に一致する本を特定しました</h3>` + createBookHTML(bookId, query, pages, `Title-Room-${addr.toString(36)}`);
+}
+
+// 3. 内容を調べる
+function searchContent() {
+    const query = document.getElementById("contentInput").value.toLowerCase();
+    if(!query || query.length > PAGE_LEN) return alert("文字数を確認してください");
+
+    const baseAddr = textToAddress(query);
+    const el = document.getElementById("contentResult");
+    el.style.display = "block";
+    el.innerHTML = `<h3>🔍 入力された内容が含まれる本のアドレスを特定しました</h3>`;
+
+    // 🟡 一部（部分一致）が含まれている本 (有限1000ページ)
+    const idPartial = "content_partial_" + baseAddr;
+    activeBooks[idPartial] = { address: baseAddr, totalPages: 1000, type: "partial", injectedText: query };
+    el.innerHTML += createBookHTML(idPartial, "（無題の本）", 1000, `Addr-P-${baseAddr.toString(16)}`, "※1ページ目の一部に該当記述あり");
+
+    // 🟢 1ページ目が完全一致している本 (有限410ページ)
+    const idExact = "content_exact_" + baseAddr;
+    activeBooks[idExact] = { address: baseAddr + 1n, totalPages: 410, type: "exact", injectedText: query };
+    el.innerHTML += createBookHTML(idExact, "（無題の本）", 410, `Addr-E-${(baseAddr+1n).toString(16)}`, "※1ページ目が完全一致");
+
+    // 🔴 すべてのページにそれしか書いていない本 (無限ページ)
+    const idInfinite = "content_inf_" + baseAddr;
+    activeBooks[idInfinite] = { address: baseAddr + 2n, totalPages: "無限", type: "infinite_repeat", queryText: query };
+    el.innerHTML += createBookHTML(idInfinite, "（終わりのない本）", "無限", `Addr-Inf-${(baseAddr+2n).toString(16)}`, "※すべてのページがこの記述のみでループ");
+}
+</script>
+</body>
+</html>
